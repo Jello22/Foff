@@ -18,7 +18,7 @@ namespace FOff
     [BepInDependency(ConfigurationManagerGuid, BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class FOffPlugin : BaseUnityPlugin
     {
-        public const string PluginGuid = "com.Jelo.Foff";
+        public const string PluginGuid = "com.Jello.Foff";
         public const string PluginName = "F Off";
         public const string PluginVersion = "0.2.0";
 
