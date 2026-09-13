@@ -305,8 +305,9 @@ namespace FOff
             try
             {
                 UnityEngine.Object[] hints =
-                    UnityEngine.Object.FindObjectsOfType(
-                        _uiInputHintType!
+                    UnityEngine.Object.FindObjectsByType(
+                        _uiInputHintType!,
+                        FindObjectsSortMode.None
                     );
 
                 foreach (UnityEngine.Object hint in hints)
