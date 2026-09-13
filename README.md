@@ -25,7 +25,3 @@ With BepInEx ConfigurationManager installed, open the configuration menu and fin
 `F Off > Build Menu > Filter Key`
 Default: `F`
 Use **Reset** to restore the default key.
-
-
-
-
