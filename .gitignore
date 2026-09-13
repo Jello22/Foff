@@ -20,6 +20,7 @@ obj/
 *.dll
 *.pdb
 *.zip
+*.ps1
 
 # NuGet
 *.nupkg

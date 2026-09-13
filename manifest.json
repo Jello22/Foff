@@ -4,7 +4,6 @@
   "website_url": "",
   "description": "Tells Valheim's hardcoded F key to F Off. Rebind the build-menu filter key to whatever you want, using the config. Client-side only—no server installation required",
   "dependencies": [
-    "denikson-BepInExPack_Valheim-5.4.2350",
-    "Azumatt-Official_BepInEx_ConfigurationManager-18.4.1"
+    ""
   ]
 }
