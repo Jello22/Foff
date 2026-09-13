@@ -1,0 +1,35 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# VS Code
+.vscode/
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Build/package artifacts
+*.dll
+*.pdb
+*.zip
+
+# NuGet
+*.nupkg
+*.snupkg
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# BepInEx / Valheim local files
+BepInEx/
+valheim_Data/
