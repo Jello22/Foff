@@ -1,6 +1,6 @@
 {
   "name": "FOff",
-  "version_number": "0.2.0",
+  "version_number": "0.3.0",
   "website_url": "",
   "description": "Tells Valheim's hardcoded F key to F Off. Rebind the build-menu filter key to whatever you want, using the config. Client-side only—no server installation required",
   "dependencies": [
