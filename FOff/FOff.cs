@@ -15,64 +15,94 @@ using UnityEngine;
 namespace FOff
 {
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
-    [BepInDependency(ConfigurationManagerGuid, BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency(
+        ConfigurationManagerGuid,
+        BepInDependency.DependencyFlags.SoftDependency
+    )]
     public sealed class FOffPlugin : BaseUnityPlugin
     {
         public const string PluginGuid = "com.Jello.Foff";
         public const string PluginName = "F Off";
-        public const string PluginVersion = "0.2.0";
+        public const string PluginVersion = "0.3.0";
 
         public const string ConfigurationManagerGuid =
             "com.bepis.bepinex.configurationmanager";
 
         internal static ConfigEntry<KeyboardShortcut> FilterKey = null!;
+        internal static ConfigEntry<KeyboardShortcut> PreviousTabKey = null!;
+        internal static ConfigEntry<KeyboardShortcut> NextTabKey = null!;
+
         internal static ManualLogSource Log = null!;
 
         private Harmony? _harmony;
 
-        private static ZInputGetKeyDelegate? _zInputGetKey;
-
+         /* TextMeshPro is kept reflective*/
         private static bool _uiReflectionInitialized;
         private static bool _uiReflectionAvailable;
         private static bool _uiFailureLogged;
 
-        private static Type? _uiInputHintType;
         private static Type? _textMeshProType;
         private static FieldInfo? _mouseKeyboardHintField;
         private static PropertyInfo? _tmpTextProperty;
-
-        private delegate bool ZInputGetKeyDelegate(
-            KeyCode key,
-            bool blockOtherInput
-        );
 
         private void Awake()
         {
             Log = Logger;
 
+            PreviousTabKey = Config.Bind(
+                "Build Menu",
+                "Previous Tab Key",
+                new KeyboardShortcut(KeyCode.Q),
+                new ConfigDescription(
+                    "Key used to move to the previous tab in Valheim's build menu.",
+                    null,
+                    new ConfigurationManagerAttributes
+                    {
+                        Order = 3
+                    }
+                )
+            );
+
+            NextTabKey = Config.Bind(
+                "Build Menu",
+                "Next Tab Key",
+                new KeyboardShortcut(KeyCode.E),
+                new ConfigDescription(
+                    "Key used to move to the next tab in Valheim's build menu.",
+                    null,
+                    new ConfigurationManagerAttributes
+                    {
+                        Order = 2
+                    }
+                )
+            );
+
             FilterKey = Config.Bind(
                 "Build Menu",
                 "Filter Key",
                 new KeyboardShortcut(KeyCode.F),
-                "Key used to focus the Filter field in Valheim's build menu."
+                new ConfigDescription(
+                    "Key used to focus the Filter field in Valheim's build menu.",
+                    null,
+                    new ConfigurationManagerAttributes
+                    {
+                        Order = 1
+                    }
+                )
             );
 
             FilterKey.SettingChanged += OnFilterKeyChanged;
-
-            if (!TryBindZInputGetKey())
-            {
-                Logger.LogError(
-                    "Could not resolve ZInput.GetKey(KeyCode, bool). F Off will not patch the Filter key."
-                );
-
-                return;
-            }
+            PreviousTabKey.SettingChanged += OnTabKeyChanged;
+            NextTabKey.SettingChanged += OnTabKeyChanged;
 
             _harmony = new Harmony(PluginGuid);
             _harmony.PatchAll(typeof(FOffPlugin).Assembly);
 
             Logger.LogInfo(
-                $"{PluginName} {PluginVersion} loaded. Filter key: {FilterKey.Value}"
+                $"{PluginName} {PluginVersion} loaded. " +
+                $"Filter: {FilterKey.Value}, " +
+                $"Previous Tab: {PreviousTabKey.Value}, " +
+                $"Next Tab: {NextTabKey.Value}"
             );
         }
 
@@ -83,6 +113,16 @@ namespace FOff
                 FilterKey.SettingChanged -= OnFilterKeyChanged;
             }
 
+            if (PreviousTabKey != null)
+            {
+                PreviousTabKey.SettingChanged -= OnTabKeyChanged;
+            }
+
+            if (NextTabKey != null)
+            {
+                NextTabKey.SettingChanged -= OnTabKeyChanged;
+            }
+
             _harmony?.UnpatchSelf();
         }
 
@@ -91,54 +131,32 @@ namespace FOff
             EventArgs args
         )
         {
-            Log?.LogInfo($"Filter key changed to: {FilterKey.Value}");
+            Log?.LogInfo(
+                $"Filter key changed to: {FilterKey.Value}"
+            );
+
             RefreshVisibleFilterHints();
         }
 
-        private static bool TryBindZInputGetKey()
+        private static void OnTabKeyChanged(
+            object sender,
+            EventArgs args
+        )
         {
-            try
-            {
-                Type? zInputType = AccessTools.TypeByName("ZInput");
+            Log?.LogInfo(
+                $"Build tab keys changed. " +
+                $"Previous: {PreviousTabKey.Value}, " +
+                $"Next: {NextTabKey.Value}"
+            );
 
-                MethodInfo? method = zInputType == null
-                    ? null
-                    : AccessTools.Method(
-                        zInputType,
-                        "GetKey",
-                        new[]
-                        {
-                            typeof(KeyCode),
-                            typeof(bool)
-                        }
-                    );
-
-                if (method == null)
-                {
-                    return false;
-                }
-
-                _zInputGetKey =
-                    (ZInputGetKeyDelegate)Delegate.CreateDelegate(
-                        typeof(ZInputGetKeyDelegate),
-                        method
-                    );
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Log?.LogError(
-                    $"Failed to bind ZInput.GetKey(KeyCode, bool): {ex}"
-                );
-
-                return false;
-            }
+            RefreshVisibleTabHints();
         }
 
+        /*Vanilla's Filter check uses GetKey rather than GetKeyDown,*/
+         
         internal static bool IsFilterKeyPressed()
         {
-            if (_zInputGetKey == null || FilterKey == null)
+            if (FilterKey == null)
             {
                 return false;
             }
@@ -152,16 +170,141 @@ namespace FOff
 
             foreach (KeyCode modifier in shortcut.Modifiers)
             {
-                if (!_zInputGetKey(modifier, true))
+                if (!ZInput.GetKey(modifier, true))
                 {
                     return false;
                 }
             }
 
-            return _zInputGetKey(shortcut.MainKey, true);
+            return ZInput.GetKey(
+                shortcut.MainKey,
+                true
+            );
         }
 
-        // Cache the Valheim UI fields used by the Filter hint.
+        /*
+          Build-tab navigation should fire once per press, matching
+          vanilla TabHandler's GetButtonDown behavior.
+         */
+        internal static bool IsShortcutDown(
+            KeyboardShortcut shortcut
+        )
+        {
+            return shortcut.IsDown();
+        }
+
+        /*
+         BuildUi's tab navigation.
+         We do NOT modify Valheim's global TABs
+         */
+        internal static void UpdateBuildMenuTabKeys(
+            BuildUi buildUi
+        )
+        {
+            if (buildUi == null ||
+                buildUi.m_tabHandler == null ||
+                PreviousTabKey == null ||
+                NextTabKey == null)
+            {
+                return;
+            }
+
+            TabHandler tabHandler =
+                buildUi.m_tabHandler;
+
+            // Diagnostics.
+            bool previousPressed = IsShortcutDown(PreviousTabKey.Value);
+            bool nextPressed = IsShortcutDown(NextTabKey.Value);
+
+           int direction = 0;
+
+            if (previousPressed)
+            {
+                direction = -1;
+            }
+            else if (nextPressed)
+            {
+                direction = 1;
+            }
+
+            if (direction == 0 ||
+                tabHandler.m_tabs.Count == 0)
+            {
+                return;
+            }
+
+            int current =
+                tabHandler.GetActiveTab();
+
+            int next =
+                current + direction;
+
+            /*Match TabHandler's normal cycling behavior.*/
+            if (tabHandler.m_cycling)
+            {
+                if (next < 0)
+                {
+                    next =
+                        tabHandler.m_tabs.Count - 1;
+                }
+                else if (next >=
+                         tabHandler.m_tabs.Count)
+                {
+                    next = 0;
+                }
+            }
+            else
+            {
+                next = Math.Max(
+                    0,
+                    Math.Min(
+                        tabHandler.m_tabs.Count - 1,
+                        next
+                    )
+                );
+            }
+
+            /*Skip entries without a button, matching vanilla TabHandler.Update().*/
+            int start = next;
+
+            while (!tabHandler.m_tabs[next].m_button)
+            {
+                next += direction;
+
+                if (tabHandler.m_cycling)
+                {
+                    if (next < 0)
+                    {
+                        next =
+                            tabHandler.m_tabs.Count - 1;
+                    }
+                    else if (next >=
+                             tabHandler.m_tabs.Count)
+                    {
+                        next = 0;
+                    }
+                }
+                else
+                {
+                    return;
+                }
+
+                if (next == start)
+                {
+                    return;
+                }
+            }
+
+            /* Invoke the actual tab button so Valheim runs itsormal BuildUi listener and SelectPieceList */
+                       
+             
+            tabHandler.SetActiveTabViaButtonIfAvailable(
+                next
+            );
+        }
+
+        /* Cache the reflective pieces needed to updateTextMeshPro */
+
         private static bool EnsureUiReflection()
         {
             if (_uiReflectionInitialized)
@@ -173,17 +316,16 @@ namespace FOff
 
             try
             {
-                _uiInputHintType =
-                    AccessTools.TypeByName("UIInputHint");
-
                 _textMeshProType =
-                    AccessTools.TypeByName("TMPro.TextMeshProUGUI");
+                    AccessTools.TypeByName(
+                        "TMPro.TextMeshProUGUI"
+                    );
 
-                if (_uiInputHintType == null ||
-                    _textMeshProType == null)
+                if (_textMeshProType == null)
                 {
                     LogUiWarningOnce(
-                        "Could not resolve Valheim's Filter hint UI. The keybind will still work."
+                        "Could not resolve TextMeshPro. " +
+                        "Keybinds will still work."
                     );
 
                     return false;
@@ -191,7 +333,7 @@ namespace FOff
 
                 _mouseKeyboardHintField =
                     AccessTools.Field(
-                        _uiInputHintType,
+                        typeof(UIInputHint),
                         "m_mouseKeyboardHint"
                     );
 
@@ -206,7 +348,8 @@ namespace FOff
                     !_tmpTextProperty.CanWrite)
                 {
                     LogUiWarningOnce(
-                        "Valheim's Filter hint UI no longer matches the expected layout. The keybind will still work."
+                        "Valheim's key hint UI no longer matches " +
+                        "the expected layout. Keybinds will still work."
                     );
 
                     return false;
@@ -218,15 +361,19 @@ namespace FOff
             catch (Exception ex)
             {
                 LogUiWarningOnce(
-                    $"Could not initialize Filter hint support: {ex.Message}"
+                    $"Could not initialize key hint support: " +
+                    $"{ex.Message}"
                 );
 
                 return false;
             }
         }
 
-        // Update only the build-menu SearchBar keyboard hint.
-        internal static void UpdateFilterHint(object instance)
+        /* Update only the build-menu SearchBar Filter hint.
+         */
+        internal static void UpdateFilterHint(
+            UIInputHint inputHint
+        )
         {
             if (!EnsureUiReflection())
             {
@@ -235,19 +382,16 @@ namespace FOff
 
             try
             {
-                if (!(instance is Component hintComponent))
-                {
-                    return;
-                }
-
-                GameObject hintObject = hintComponent.gameObject;
+                GameObject hintObject =
+                    inputHint.gameObject;
 
                 if (hintObject.name != "SearchBarHint")
                 {
                     return;
                 }
 
-                Transform parent = hintObject.transform.parent;
+                Transform parent =
+                    hintObject.transform.parent;
 
                 if (parent == null ||
                     parent.name != "SearchBar")
@@ -256,7 +400,8 @@ namespace FOff
                 }
 
                 GameObject? keyboardHint =
-                    _mouseKeyboardHintField!.GetValue(instance)
+                    _mouseKeyboardHintField!
+                        .GetValue(inputHint)
                     as GameObject;
 
                 if (keyboardHint == null)
@@ -273,7 +418,9 @@ namespace FOff
                 }
 
                 Component? textComponent =
-                    textTransform.GetComponent(_textMeshProType!);
+                    textTransform.GetComponent(
+                        _textMeshProType!
+                    );
 
                 if (textComponent == null)
                 {
@@ -289,12 +436,15 @@ namespace FOff
             catch (Exception ex)
             {
                 LogUiWarningOnce(
-                    $"Could not update Filter key hint: {ex.Message}"
+                    $"Could not update Filter key hint: " +
+                    $"{ex.Message}"
                 );
             }
         }
 
-        // Refresh the visible hint immediately when the setting changes.
+        /* Refresh the Filter hint immediately when the setting config  */
+
+
         private static void RefreshVisibleFilterHints()
         {
             if (!EnsureUiReflection())
@@ -304,13 +454,13 @@ namespace FOff
 
             try
             {
-                UnityEngine.Object[] hints =
-                    UnityEngine.Object.FindObjectsByType(
-                        _uiInputHintType!,
-                        FindObjectsSortMode.None
-                    );
+                UIInputHint[] hints =
+                    UnityEngine.Object
+                        .FindObjectsByType<UIInputHint>(
+                            FindObjectsSortMode.None
+                        );
 
-                foreach (UnityEngine.Object hint in hints)
+                foreach (UIInputHint hint in hints)
                 {
                     UpdateFilterHint(hint);
                 }
@@ -318,24 +468,149 @@ namespace FOff
             catch (Exception ex)
             {
                 LogUiWarningOnce(
-                    $"Could not refresh Filter key hint: {ex.Message}"
+                    $"Could not refresh Filter key hint: " +
+                    $"{ex.Message}"
                 );
             }
         }
 
-        private static string GetFilterHintText()
+
+        internal static void UpdateTabHints(
+            BuildUi buildUi
+        )
         {
-            KeyCode key = FilterKey.Value.MainKey;
+            if (buildUi == null ||
+                PreviousTabKey == null ||
+                NextTabKey == null)
+            {
+                return;
+            }
+
+            if (!EnsureUiReflection())
+            {
+                return;
+            }
+
+            try
+            {
+                Transform root =
+                    buildUi.transform;
+
+                Transform? leftHint =
+                    root.Find(
+                        "bar/SelectionWindow/TabContainer/" +
+                        "InputHelp/MK hints/Left"
+                    );
+
+                Transform? rightHint =
+                    root.Find(
+                        "bar/SelectionWindow/TabContainer/" +
+                        "InputHelp/MK hints/Right"
+                    );
+
+                if (leftHint == null ||
+                    rightHint == null)
+                {
+                    return;
+                }
+
+                SetTabHintText(
+                    leftHint,
+                    GetShortcutHintText(
+                        PreviousTabKey.Value
+                    )
+                );
+
+                SetTabHintText(
+                    rightHint,
+                    GetShortcutHintText(
+                        NextTabKey.Value
+                    )
+                );
+            }
+            catch (Exception ex)
+            {
+                Log?.LogWarning(
+                    $"Could not update build tab key hints: " +
+                    $"{ex.Message}"
+                );
+            }
+        }
+
+
+        private static void RefreshVisibleTabHints()
+        {
+            if (!EnsureUiReflection())
+            {
+                return;
+            }
+
+            try
+            {
+                BuildUi[] buildUis =
+                    UnityEngine.Object
+                        .FindObjectsByType<BuildUi>(
+                            FindObjectsSortMode.None
+                        );
+
+                foreach (BuildUi buildUi in buildUis)
+                {
+                    UpdateTabHints(buildUi);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log?.LogWarning(
+                    $"Could not refresh build tab key hints: " +
+                    $"{ex.Message}"
+                );
+            }
+        }
+
+        private static void SetTabHintText(
+            Transform hint,
+            string text
+        )
+        {
+            Component? textComponent =
+                hint.GetComponentInChildren(
+                    _textMeshProType!,
+                    true
+                );
+
+            if (textComponent == null)
+            {
+                return;
+            }
+
+            _tmpTextProperty!.SetValue(
+                textComponent,
+                text,
+                null
+            );
+        }
+
+
+        private static string GetShortcutHintText(
+            KeyboardShortcut shortcut
+        )
+        {
+            KeyCode key =
+                shortcut.MainKey;
 
             if (key == KeyCode.None)
             {
                 return string.Empty;
             }
 
-            string name = key.ToString();
+            string name =
+                key.ToString();
 
-            // Unity names number-row keys Alpha0 through Alpha9.
-            if (name.StartsWith("Alpha", StringComparison.Ordinal) &&
+
+            if (name.StartsWith(
+                    "Alpha",
+                    StringComparison.Ordinal
+                ) &&
                 name.Length == 6)
             {
                 return name.Substring(5);
@@ -344,7 +619,16 @@ namespace FOff
             return name;
         }
 
-        private static void LogUiWarningOnce(string message)
+        private static string GetFilterHintText()
+        {
+            return GetShortcutHintText(
+                FilterKey.Value
+            );
+        }
+
+        private static void LogUiWarningOnce(
+            string message
+        )
         {
             if (_uiFailureLogged)
             {
@@ -356,32 +640,56 @@ namespace FOff
         }
     }
 
-    [HarmonyPatch]
-    internal static class BuildUiNavigationUpdatePatch
+
+    [HarmonyPatch(
+        typeof(BuildUi),
+        nameof(BuildUi.Awake)
+    )]
+    internal static class BuildUiAwakePatch
     {
-        private static MethodBase? TargetMethod()
+        private static void Postfix(
+            BuildUi __instance
+        )
         {
-            Type? buildUiType =
-                AccessTools.TypeByName("BuildUi");
-
-            MethodInfo? target =
-                buildUiType == null
-                    ? null
-                    : AccessTools.Method(
-                        buildUiType,
-                        "NavigationUpdate"
-                    );
-
-            if (target == null)
+            if (__instance.m_tabHandler != null)
             {
-                FOffPlugin.Log?.LogError(
-                    "Could not find BuildUi.NavigationUpdate(). No Filter-key patch will be applied."
+                __instance.m_tabHandler.m_keybaordInput =
+                    false;
+
+                FOffPlugin.Log?.LogInfo(
+                    "Disabled vanilla BuildUi Q/E tab handling."
                 );
             }
 
-            return target;
+            FOffPlugin.UpdateTabHints(
+                __instance
+            );
         }
+    }
+    [HarmonyPatch(
+        typeof(TabHandler),
+        nameof(TabHandler.Update)
+    )]
+    internal static class TabHandlerUpdatePatch
+    {
+        private static void Prefix(TabHandler __instance)
+        {
+            if (__instance.GetComponentInParent<BuildUi>() == null)
+            {
+                return;
+            }
 
+            __instance.m_keybaordInput = false;
+        }
+    }
+    
+
+    [HarmonyPatch(
+        typeof(BuildUi),
+        nameof(BuildUi.NavigationUpdate)
+    )]
+    internal static class BuildUiNavigationUpdatePatch
+    {
         private static IEnumerable<CodeInstruction> Transpiler(
             IEnumerable<CodeInstruction> instructions
         )
@@ -389,21 +697,16 @@ namespace FOff
             List<CodeInstruction> codes =
                 instructions.ToList();
 
-            Type? zInputType =
-                AccessTools.TypeByName("ZInput");
-
             MethodInfo? zInputGetKey =
-                zInputType == null
-                    ? null
-                    : AccessTools.Method(
-                        zInputType,
-                        "GetKey",
-                        new[]
-                        {
-                            typeof(KeyCode),
-                            typeof(bool)
-                        }
-                    );
+                AccessTools.Method(
+                    typeof(ZInput),
+                    nameof(ZInput.GetKey),
+                    new[]
+                    {
+                        typeof(KeyCode),
+                        typeof(bool)
+                    }
+                );
 
             MethodInfo? replacementMethod =
                 AccessTools.Method(
@@ -415,19 +718,26 @@ namespace FOff
                 replacementMethod == null)
             {
                 FOffPlugin.Log?.LogError(
-                    "Could not resolve patch methods. BuildUi was left untouched."
+                    "Could not resolve Filter patch methods. " +
+                    "BuildUi was left untouched."
                 );
 
                 return codes;
             }
 
-            List<int> matches = new List<int>();
+            List<int> matches =
+                new List<int>();
 
-            for (int i = 0; i <= codes.Count - 3; i++)
+            for (int i = 0;
+                 i <= codes.Count - 3;
+                 i++)
             {
                 if (LoadsFilterKey(codes[i]) &&
                     LoadsTrue(codes[i + 1]) &&
-                    CallsMethod(codes[i + 2], zInputGetKey))
+                    CallsMethod(
+                        codes[i + 2],
+                        zInputGetKey
+                    ))
                 {
                     matches.Add(i);
                 }
@@ -436,13 +746,16 @@ namespace FOff
             if (matches.Count != 1)
             {
                 FOffPlugin.Log?.LogWarning(
-                    $"Expected one hardcoded BuildUi Filter-key pattern, but found {matches.Count}. Vanilla behavior was preserved."
+                    $"Expected one hardcoded BuildUi Filter-key " +
+                    $"pattern, but found {matches.Count}. " +
+                    $"Vanilla behavior was preserved."
                 );
 
                 return codes;
             }
 
-            int index = matches[0];
+            int index =
+                matches[0];
 
             CodeInstruction replacement =
                 new CodeInstruction(
@@ -450,21 +763,50 @@ namespace FOff
                     replacementMethod
                 );
 
-            // Preserve Harmony metadata from the replaced instructions.
-            for (int i = index; i < index + 3; i++)
+
+            for (int i = index;
+                 i < index + 3;
+                 i++)
             {
-                replacement.labels.AddRange(codes[i].labels);
-                replacement.blocks.AddRange(codes[i].blocks);
+                replacement.labels.AddRange(
+                    codes[i].labels
+                );
+
+                replacement.blocks.AddRange(
+                    codes[i].blocks
+                );
             }
 
-            codes.RemoveRange(index, 3);
-            codes.Insert(index, replacement);
+            codes.RemoveRange(
+                index,
+                3
+            );
+
+            codes.Insert(
+                index,
+                replacement
+            );
 
             FOffPlugin.Log?.LogInfo(
-                "Replaced the hardcoded F check in BuildUi.NavigationUpdate()."
+                "Replaced the hardcoded F check in " +
+                "BuildUi.NavigationUpdate()."
             );
 
             return codes;
+        }
+
+
+        private static void Postfix(
+            BuildUi __instance
+        )
+        {
+            FOffPlugin.UpdateBuildMenuTabKeys(
+                __instance
+            );
+
+            FOffPlugin.UpdateTabHints(
+                __instance
+            );
         }
 
         private static bool LoadsFilterKey(
@@ -472,7 +814,8 @@ namespace FOff
         )
         {
             return
-                instruction.opcode == OpCodes.Ldc_I4_S &&
+                instruction.opcode ==
+                    OpCodes.Ldc_I4_S &&
                 instruction.operand is sbyte value &&
                 value == (int)KeyCode.F;
         }
@@ -481,7 +824,8 @@ namespace FOff
             CodeInstruction instruction
         )
         {
-            return instruction.opcode == OpCodes.Ldc_I4_1;
+            return instruction.opcode ==
+                   OpCodes.Ldc_I4_1;
         }
 
         private static bool CallsMethod(
@@ -490,42 +834,34 @@ namespace FOff
         )
         {
             return
-                (instruction.opcode == OpCodes.Call ||
-                 instruction.opcode == OpCodes.Callvirt) &&
-                instruction.operand is MethodInfo called &&
+                (instruction.opcode ==
+                     OpCodes.Call ||
+                 instruction.opcode ==
+                     OpCodes.Callvirt) &&
+                instruction.operand
+                    is MethodInfo called &&
                 called == method;
         }
     }
+    internal sealed class ConfigurationManagerAttributes
+    {
+        public int? Order;
+    }
+    
 
-    [HarmonyPatch]
+    [HarmonyPatch(
+        typeof(UIInputHint),
+        nameof(UIInputHint.UpdateInputHints)
+    )]
     internal static class SearchBarInputHintPatch
     {
-        private static MethodBase? TargetMethod()
+        private static void Postfix(
+            UIInputHint __instance
+        )
         {
-            Type? hintType =
-                AccessTools.TypeByName("UIInputHint");
-
-            MethodInfo? target =
-                hintType == null
-                    ? null
-                    : AccessTools.Method(
-                        hintType,
-                        "UpdateInputHints"
-                    );
-
-            if (target == null)
-            {
-                FOffPlugin.Log?.LogWarning(
-                    "Could not find UIInputHint.UpdateInputHints(). The Filter key will work, but its on-screen hint will remain vanilla."
-                );
-            }
-
-            return target;
-        }
-
-        private static void Postfix(object __instance)
-        {
-            FOffPlugin.UpdateFilterHint(__instance);
+            FOffPlugin.UpdateFilterHint(
+                __instance
+            );
         }
     }
 }

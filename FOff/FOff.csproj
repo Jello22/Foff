@@ -6,10 +6,12 @@
 
     <OutputType>Library</OutputType>
     <PlatformTarget>AnyCPU</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
 
     <AssemblyName>FOff</AssemblyName>
     <RootNamespace>FOff</RootNamespace>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
 
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <Deterministic>true</Deterministic>
@@ -17,6 +19,7 @@
 
     <ValheimDir Condition="'$(ValheimDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</ValheimDir>
     <ValheimManaged Condition="'$(ValheimManaged)' == ''">$(ValheimDir)\valheim_Data\Managed</ValheimManaged>
+    <PublicizedAssemblies Condition="'$(PublicizedAssemblies)' == ''">$(ValheimManaged)\publicized_assemblies</PublicizedAssemblies>
 
 
     <BepInExLibDir Condition="'$(BepInExLibDir)' == ''">C:\ValheimShit\libs</BepInExLibDir>
@@ -28,8 +31,28 @@
       <Private>false</Private>
     </Reference>
 
+    <Reference Include="assembly_utils">
+      <HintPath>$(PublicizedAssemblies)\assembly_utils_publicized.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <Reference Include="assembly_utils">
+      <HintPath>$(PublicizedAssemblies)\assembly_guiutils_publicized.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
     <Reference Include="0Harmony">
       <HintPath>$(BepInExLibDir)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <Reference Include="assembly_valheim">
+      <HintPath>$(PublicizedAssemblies)\assembly_valheim_publicized.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ValheimManaged)\UnityEngine.UI.dll</HintPath>
       <Private>false</Private>
     </Reference>
 
